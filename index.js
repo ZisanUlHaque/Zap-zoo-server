@@ -65,12 +65,14 @@ async function run() {
     const db = client.db("zap_shift_db");
     const parcelsCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
+    const userCollection = db.collection('users');
 
      // users related apis
         app.post('/users', async (req, res) => {
             const user = req.body;
             user.role = 'user';
             user.createdAt = new Date();
+
             const email = user.email;
             const userExists = await userCollection.findOne({ email })
 
