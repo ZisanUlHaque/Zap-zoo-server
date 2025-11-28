@@ -68,13 +68,34 @@ async function run() {
     const userCollection = db.collection("users");
     const ridersCollection = db.collection("riders");
 
+    //middleware with database access
+    const verifyAdmin = async (req, res, next) => {
+      next();
+    };
+
     // users related apis
 
-    app.get('/users',async(req,res)=>{
-      const cursor = userCollection.find();
+    app.get("/users", verifyFBToken, async (req, res) => {
+      const searchText = req.query.searchText;
+      const query = {};
+
+      if (searchText) {
+        // query.displayName = {$regex: searchText, $options: 'i'}
+
+        query.$or = [
+          { displayName: { $regex: searchText, $options: "i" } },
+          { email: { $regex: searchText, $options: "i" } },
+        ];
+      }
+
+      const cursor = userCollection
+        .find(query)
+        .sort({ createdAt: -1 })
+        .limit(5);
       const result = await cursor.toArray();
       res.send(result);
-    })
+    });
+
     app.post("/users", async (req, res) => {
       const user = req.body;
       user.role = "user";
@@ -90,6 +111,31 @@ async function run() {
       const result = await userCollection.insertOne(user);
       res.send(result);
     });
+
+    app.get("/users/:email/role", async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+      res.send({ role: user?.role || "user" });
+    });
+
+    app.patch(
+      "/users/:id/role",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const roleInfo = req.body;
+        const query = { _id: new ObjectId(id) };
+        const updatedDoc = {
+          $set: {
+            role: roleInfo.role,
+          },
+        };
+        const result = await userCollection.updateOne(query, updatedDoc);
+        res.send(result);
+      }
+    );
 
     //parcel api
     app.get("/parcels", async (req, res) => {
