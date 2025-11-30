@@ -140,13 +140,19 @@ async function run() {
     //parcel api
     app.get("/parcels", async (req, res) => {
       const query = {};
-      const { email } = req.query;
+      const { email, deliveryStatus } = req.query;
 
+      // /parcels?email=''&
       if (email) {
         query.senderEmail = email;
       }
 
+      if (deliveryStatus) {
+        query.deliveryStatus = deliveryStatus;
+      }
+
       const options = { sort: { createdAt: -1 } };
+
       const cursor = parcelsCollection.find(query, options);
       const result = await cursor.toArray();
       res.send(result);
@@ -165,6 +171,37 @@ async function run() {
       const query = { _id: new ObjectId(id) };
       const result = await parcelsCollection.findOne(query);
       res.send(result);
+    });
+
+    app.patch("/parcels/:id", async (req, res) => {
+      const { riderId, riderName, riderEmail } = req.body;
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+
+      const updatedDoc = {
+        $set: {
+          deliveryStatus: "driver_assigned",
+          riderId: riderId,
+          riderName: riderName,
+          riderEmail: riderEmail,
+        },
+      };
+
+      const result = await parcelsCollection.updateOne(query, updatedDoc);
+
+      // update rider information
+      const riderQuery = { _id: new ObjectId(riderId) };
+      const riderUpdatedDoc = {
+        $set: {
+          workStatus: "in_delivery",
+        },
+      };
+      const riderResult = await ridersCollection.updateOne(
+        riderQuery,
+        riderUpdatedDoc
+      );
+
+      res.send(riderResult);
     });
 
     app.delete("/parcels/:id", async (req, res) => {
@@ -257,6 +294,7 @@ async function run() {
         const update = {
           $set: {
             paymentStatus: "paid",
+            deliveryStatus: "pending-pickup",
             trackingId: trackingId,
           },
         };
@@ -292,31 +330,57 @@ async function run() {
     });
 
     // payment related apis
+    // payment related apis
     app.get("/payments", verifyFBToken, async (req, res) => {
-      const email = req.query.email;
-      const query = {};
+      try {
+        const email = req.query.email;
+        const query = {};
 
-      // console.log( 'headers', req.headers);
+        if (email) {
+          query.customerEmail = email;
 
-      if (email) {
-        query.customerEmail = email;
-
-        // check email address
-        if (email !== req.decoded_email) {
-          return res.status(403).send({ message: "forbidden access" });
+          // check email address
+          if (email !== req.decoded_email) {
+            return res.status(403).send({ message: "forbidden access" });
+          }
         }
+
+        // Return unique payments by transactionId
+        const result = await paymentCollection
+          .aggregate([
+            { $match: query },
+            { $sort: { paidAt: -1 } }, // latest first
+            {
+              $group: {
+                _id: "$transactionId",
+                doc: { $first: "$$ROOT" },
+              },
+            },
+            { $replaceRoot: { newRoot: "$doc" } },
+          ])
+          .toArray();
+
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ message: "Server Error", error: err.message });
       }
-      const cursor = paymentCollection.find(query).sort({ paidAt: -1 });
-      const result = await cursor.toArray();
-      res.send(result);
     });
 
     // riders related apis
     app.get("/riders", async (req, res) => {
+      const { status, district, workStatus } = req.query;
       const query = {};
-      if (req.query.status) {
-        query.status = req.query.status;
+
+      if (status) {
+        query.status = status;
       }
+      if (district) {
+        query.district = district;
+      }
+      if (workStatus) {
+        query.workStatus = workStatus;
+      }
+
       const cursor = ridersCollection.find(query);
       const result = await cursor.toArray();
       res.send(result);
@@ -338,6 +402,7 @@ async function run() {
       const updatedDoc = {
         $set: {
           status: status,
+          workStatus: "available",
         },
       };
 
