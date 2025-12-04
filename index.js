@@ -11,6 +11,7 @@ const crypto = require("crypto");
 
 const admin = require("firebase-admin");
 const serviceAccount = require("./zap-shift-admin.json");
+const { create } = require("domain");
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -67,10 +68,22 @@ async function run() {
     const paymentCollection = db.collection("payments");
     const userCollection = db.collection("users");
     const ridersCollection = db.collection("riders");
+    const trackingsCollection = db.collection("trackings");
 
     //middleware with database access
     const verifyAdmin = async (req, res, next) => {
       next();
+    };
+
+    const logTracking = async (trackingId, status) => {
+      const log = {
+        trackingId,
+        status,
+        details: status.split("-").join(" "),
+        createdAt: new Date(),
+      };
+      const result = await trackingsCollection.insertOne(log);
+      return result;
     };
 
     // users related apis
@@ -164,9 +177,11 @@ async function run() {
       if (riderEmail) {
         query.riderEmail = riderEmail;
       }
-      if (deliveryStatus) {
+      if (deliveryStatus !== "parcel_delivered") {
         // query.deliveryStatus = { $in: ["driver_assigned", "rider_arriving"] };
-        query.deliveryStatus = { $nin: ['parcel_delivered'] }
+        query.deliveryStatus = { $nin: ["parcel_delivered"] };
+      } else {
+        query.deliveryStatus = deliveryStatus;
       }
 
       const cursor = parcelsCollection.find(query);
@@ -176,8 +191,12 @@ async function run() {
 
     app.post("/parcels", async (req, res) => {
       const parcel = req.body;
+      const trackingId = generateTrackingId();
       // parcel created time
       parcel.createdAt = new Date();
+
+      parcel.trackingId = trackingId;
+      logTracking(trackingId, 'parcel_created')
       const result = await parcelsCollection.insertOne(parcel);
       res.send(result);
     });
@@ -208,7 +227,7 @@ async function run() {
 
       const result = await parcelsCollection.updateOne(query, updatedDoc);
       // log tracking
-      // logTracking(trackingId, deliveryStatus);
+      logTracking(trackingId, deliveryStatus);
 
       res.send(result);
     });
@@ -221,7 +240,7 @@ async function run() {
     });
 
     app.patch("/parcels/:id", async (req, res) => {
-      const { riderId, riderName, riderEmail } = req.body;
+      const { riderId, riderName, riderEmail, trackingId } = req.body;
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
 
@@ -247,6 +266,8 @@ async function run() {
         riderQuery,
         riderUpdatedDoc
       );
+
+      logTracking(trackingId, "driver_assigned");
 
       res.send(riderResult);
     });
@@ -279,6 +300,7 @@ async function run() {
         mode: "payment",
         metadata: {
           parcelId: paymentInfo.parcelId,
+          trackingId: paymentInfo.trackingId
         },
         customer_email: paymentInfo.senderEmail,
         success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
@@ -333,7 +355,7 @@ async function run() {
         return res.send({ message: "already exists", transactionId });
       }
 
-      const trackingId = generateTrackingId();
+      const trackingId = session.metadata.trackingId;
 
       if (session.payment_status === "paid") {
         const id = session.metadata.parcelId;
@@ -362,6 +384,8 @@ async function run() {
 
         if (session.payment_status === "paid") {
           const resultPayment = await paymentCollection.insertOne(payment);
+
+          logTracking(trackingId, "pending-pickup");
 
           res.send({
             success: true,
@@ -469,6 +493,14 @@ async function run() {
         );
       }
 
+      res.send(result);
+    });
+
+    // tracking related apis
+    app.get("/trackings/:trackingId/logs", async (req, res) => {
+      const trackingId = req.params.trackingId;
+      const query = { trackingId };
+      const result = await trackingsCollection.find(query).toArray();
       res.send(result);
     });
 
