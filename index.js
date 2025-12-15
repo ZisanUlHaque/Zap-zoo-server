@@ -170,6 +170,27 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
+    
+
+    app.get("/parcels/delivery-status/stats", async (req, res) => {
+      const pipeline = [
+        {
+          $group: {
+            _id: "$deliveryStatus",
+            count: { $sum: 1 },
+          },
+        },
+        {
+          $project: {
+            status: "$_id",
+            count: 1,
+            // _id: 0
+          },
+        },
+      ];
+      const result = await parcelsCollection.aggregate(pipeline).toArray();
+      res.send(result);
+    });
 
     app.get("/parcels/rider", async (req, res) => {
       const { riderEmail, deliveryStatus } = req.query;
@@ -196,7 +217,7 @@ async function run() {
       parcel.createdAt = new Date();
 
       parcel.trackingId = trackingId;
-      logTracking(trackingId, 'parcel_created')
+      logTracking(trackingId, "parcel_created");
       const result = await parcelsCollection.insertOne(parcel);
       res.send(result);
     });
@@ -300,7 +321,7 @@ async function run() {
         mode: "payment",
         metadata: {
           parcelId: paymentInfo.parcelId,
-          trackingId: paymentInfo.trackingId
+          trackingId: paymentInfo.trackingId,
         },
         customer_email: paymentInfo.senderEmail,
         success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
@@ -493,6 +514,56 @@ async function run() {
         );
       }
 
+      res.send(result);
+    });
+
+    app.get("/riders/delivery-per-day", async (req, res) => {
+      const email = req.query.email;
+      // aggregate on parcel
+      const pipeline = [
+        {
+          $match: {
+            riderEmail: email,
+            deliveryStatus: "parcel_delivered",
+          },
+        },
+        {
+          $lookup: {
+            from: "trackings",
+            localField: "trackingId",
+            foreignField: "trackingId",
+            as: "parcel_trackings",
+          },
+        },
+        {
+          $unwind: "$parcel_trackings",
+        },
+        {
+          $match: {
+            "parcel_trackings.status": "parcel_delivered",
+          },
+        },
+        {
+          // convert timestamp to YYYY-MM-DD string
+          $addFields: {
+            deliveryDay: {
+              $dateToString: {
+                format: "%Y-%m-%d",
+                date: "$parcel_trackings.createdAt",
+              },
+            },
+          },
+        },
+        {
+          // group by date
+          $group: {
+            _id: "$deliveryDay",
+            deliveredCount: { $sum: 1 },
+          },
+        },
+      ];
+
+      const result = await parcelsCollection.aggregate(pipeline).toArray();
       res.send(result);
     });
 
