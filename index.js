@@ -10,7 +10,10 @@ const port = process.env.PORT || 3000;
 const crypto = require("crypto");
 
 const admin = require("firebase-admin");
-const serviceAccount = require("./zap-shift-admin.json");
+
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
+
 const { create } = require("domain");
 
 admin.initializeApp({
@@ -576,10 +579,10 @@ async function run() {
     });
 
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!"
+    // );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
